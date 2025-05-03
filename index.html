@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Бэктест торговой модели</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/moment@2.29.4/moment.min.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e0e0e0;
+        }
+        .container {
+            max-width: 700px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .form-input, .form-select {
+            background-color: #2a2a3c;
+            border: 1px solid #4a4a6a;
+            color: #e0e0e0;
+            padding: 10px;
+            border-radius: 8px;
+            width: 100%;
+        }
+        .form-input:focus, .form-select:focus {
+            outline: none;
+            border-color: #00ff88;
+            box-shadow: 0 0 5px rgba(0, 255, 136, 0.5);
+        }
+        .btn {
+            background: linear-gradient(90deg, #00ff88, #00d4ff);
+            color: #1a1a2e;
+            font-weight: bold;
+            padding: 12px;
+            border-radius: 8px;
+            transition: transform 0.2s;
+        }
+        .btn:hover {
+            transform: scale(1.05);
+        }
+        .progress-container {
+            width: 100%;
+            background-color: #2a2a3c;
+            border-radius: 5px;
+            overflow: hidden;
+        }
+        .progress-bar {
+            height: 20px;
+            background: linear-gradient(90deg, #00ff88, #00d4ff);
+            width: 0%;
+            transition: width 0.3s;
+        }
+        .result-card {
+            background-color: #2a2a3c;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 255, 136, 0.1);
+        }
+        canvas {
+            max-height: 300px;
+            background-color: #1a1a2e;
+            border-radius: 8px;
+            padding: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-3xl font-bold text-center mb-8 text-[#00ff88]">Бэктест торговой модели</h1>
+        <form id="backtestForm" class="space-y-4">
+            <div>
+                <label for="coin" class="block text-sm font-medium">Криптовалюта</label>
+                <select id="coin" class="form-select mt-1">
+                    <option value="BTC">Bitcoin (BTC)</option>
+                    <option value="ETH">Ethereum (ETH)</option>
+                    <option value="BNB">Binance Coin (BNB)</option>
+                </select>
+            </div>
+            <div>
+                <label for="capital" class="block text-sm font-medium">Начальный капитал ($)</label>
+                <input type="number" id="capital" min="100" value="1000" class="form-input mt-1">
+            </div>
+            <div>
+                <label for="leverage" class="block text-sm font-medium">Плечо</label>
+                <input type="number" id="leverage" min="1" max="100" value="2" class="form-input mt-1">
+            </div>
+            <div>
+                <label for="startDate" class="block text-sm font-medium">Дата начала</label>
+                <input type="date" id="startDate" value="2024-01-01" class="form-input mt-1">
+            </div>
+            <div>
+                <label for="endDate" class="block text-sm font-medium">Дата окончания</label>
+                <input type="date" id="endDate" value="2025-01-01" class="form-input mt-1">
+            </div>
+            <button type="submit" class="w-full btn">Запустить бэктест</button>
+        </form>
+        <div id="progress" class="mt-4 hidden">
+            <p>Прогресс: <span id="progressText">0%</span></p>
+            <div class="progress-container">
+                <div id="progressBar" class="progress-bar"></div>
+            </div>
+        </div>
+        <div id="result" class="mt-6 hidden result-card">
+            <h2 class="text-xl font-semibold mb-4">Результаты бэктеста</h2>
+            <p id="message" class="text-red-400 mb-4"></p>
+            <p><strong>Количество сделок:</strong> <span id="totalTrades"></span></p>
+            <p><strong>Общая прибыль:</strong> <span id="totalProfit"></span> USDT</p>
+            <p><strong>Максимальная просадка:</strong> <span id="maxDrawdown"></span> USDT</p>
+            <p><strong>Коэффициент Шарпа:</strong> <span id="sharpeRatio"></span></p>
+            <p><strong>Длинные сделки:</strong> <span id="longTrades"></span></p>
+            <p><strong>Короткие сделки:</strong> <span id="shortTrades"></span></p>
+            <p><strong>Итоговый баланс:</strong> <span id="finalBalance"></span> USDT</p>
+            <canvas id="equityChart" class="mt-4"></canvas>
+        </div>
+    </div>
+    <script>
+        let chart = null;
+        const equityData = { labels: [], datasets: [{ label: 'Итоговый баланс', data: [], borderColor: '#00ff88', fill: false, tension: 0.1 }] };
+        
+        function aggregateByWeek(labels, data) {
+            const weeklyData = {};
+            labels.forEach((label, index) => {
+                const date = moment(label);
+                const weekStart = date.startOf('week').format('YYYY-MM-DD');
+                if (!weeklyData[weekStart]) {
+                    weeklyData[weekStart] = { total: 0, count: 0 };
+                }
+                weeklyData[weekStart].total += data[index];
+                weeklyData[weekStart].count += 1;
+            });
+            
+            const aggregatedLabels = [];
+            const aggregatedData = [];
+            Object.keys(weeklyData).sort().forEach(week => {
+                aggregatedLabels.push(week);
+                aggregatedData.push(weeklyData[week].total / weeklyData[week].count);
+            });
+            
+            return { labels: aggregatedLabels, data: aggregatedData };
+        }
+        
+        const form = document.getElementById('backtestForm');
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const params = {
+                coin: document.getElementById('coin').value,
+                capital: parseFloat(document.getElementById('capital').value),
+                leverage: parseInt(document.getElementById('leverage').value),
+                start_date: document.getElementById('startDate').value,
+                end_date: document.getElementById('endDate').value
+            };
+            
+            // Сброс предыдущих данных
+            document.getElementById('progress').classList.remove('hidden');
+            document.getElementById('result').classList.add('hidden');
+            document.getElementById('progressBar').style.width = '0%';
+            document.getElementById('progressText').textContent = '0%';
+            equityData.labels = [];
+            equityData.datasets[0].data = [];
+            if (chart) chart.destroy();
+            
+            // Инициализация графика
+            const ctx = document.getElementById('equityChart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: equityData,
+                options: {
+                    responsive: true,
+                    scales: {
+                        x: {
+                            display: true,
+                            title: { display: true, text: 'Неделя', color: '#e0e0e0' },
+                            ticks: { color: '#e0e0e0' }
+                        },
+                        y: {
+                            display: true,
+                            title: { display: true, text: 'Баланс (USDT)', color: '#e0e0e0' },
+                            ticks: { color: '#e0e0e0' }
+                        }
+                    },
+                    plugins: {
+                        legend: { labels: { color: '#e0e0e0' } }
+                    }
+                }
+            });
+            
+            // Подключение к WebSocket
+            const ws = new WebSocket('ws://localhost:8000/ws/backtest');
+            ws.onopen = () => {
+                ws.send(JSON.stringify(params));
+            };
+            
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                if (data.type === 'progress') {
+                    const progress = data.progress.toFixed(2);
+                    document.getElementById('progressBar').style.width = `${progress}%`;
+                    document.getElementById('progressText').textContent = `${progress}%`;
+                    
+                    // Обновление графика
+                    equityData.labels.push(data.equity_curve.time);
+                    equityData.datasets[0].data.push(data.equity_curve.balance);
+                    
+                    // Агрегация по неделям
+                    const aggregated = aggregateByWeek(equityData.labels, equityData.datasets[0].data);
+                    equityData.labels = aggregated.labels;
+                    equityData.datasets[0].data = aggregated.data;
+                    chart.update();
+                } else if (data.type === 'result') {
+                    document.getElementById('progress').classList.add('hidden');
+                    document.getElementById('result').classList.remove('hidden');
+                    document.getElementById('message').textContent = data.message;
+                    document.getElementById('totalTrades').textContent = data.metrics.total_trades;
+                    document.getElementById('totalProfit').textContent = data.metrics.total_profit.toFixed(2);
+                    document.getElementById('maxDrawdown').textContent = data.metrics.max_drawdown.toFixed(2);
+                    document.getElementById('sharpeRatio').textContent = data.metrics.sharpe_ratio.toFixed(2);
+                    document.getElementById('longTrades').textContent = data.metrics.long_trades;
+                    document.getElementById('shortTrades').textContent = data.metrics.short_trades;
+                    document.getElementById('finalBalance').textContent = data.metrics.final_balance.toFixed(2);
+                    
+                    // Финальная агрегация графика
+                    const aggregated = aggregateByWeek(equityData.labels, equityData.datasets[0].data);
+                    equityData.labels = aggregated.labels;
+                    equityData.datasets[0].data = aggregated.data;
+                    chart.update();
+                    ws.close();
+                } else if (data.type === 'error') {
+                    document.getElementById('progress').classList.add('hidden');
+                    document.getElementById('result').classList.remove('hidden');
+                    document.getElementById('message').textContent = data.message;
+                    ws.close();
+                }
+            };
+            
+            ws.onerror = (error) => {
+                document.getElementById('progress').classList.add('hidden');
+                document.getElementById('result').classList.remove('hidden');
+                document.getElementById('message').textContent = `Ошибка WebSocket: ${error}`;
+            };
+        });
+        
+        // Инициализация Telegram Web App
+        window.Telegram.WebApp.ready();
+        window.Telegram.WebApp.expand();
+    </script>
+</body>
+</html>
